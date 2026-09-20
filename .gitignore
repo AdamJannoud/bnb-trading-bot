@@ -1,0 +1,16 @@
+# Configuration & Secrets
+config.json
+secret.key
+.env
+
+# Database
+*.db
+bot_database.db
+
+# Python bytecode & Environments
+__pycache__/
+*.py[cod]
+venv/
+env/
+.vscode/
+.idea/
