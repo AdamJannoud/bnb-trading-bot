@@ -1,6 +1,17 @@
 from aiohttp import web
 from db_manager import get_dashboard_metrics
 import traceback
+import json
+import base64
+
+try:
+    with open("config.json", "r") as f:
+        CONFIG = json.load(f)
+except Exception:
+    CONFIG = {}
+
+DASHBOARD_USER = CONFIG.get("DASHBOARD_USER", "admin")
+DASHBOARD_PASS = CONFIG.get("DASHBOARD_PASS", "admin123")
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -9,18 +20,18 @@ HTML_TEMPLATE = """
     <meta charset="UTF-8">
     <title>Owner Analytics Dashboard</title>
     <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0e1118; color: #fff; margin: 0; padding: 30px; }}
-        .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin-bottom: 30px; }}
-        .card {{ background: #181f2c; padding: 20px; border-radius: 12px; border: 1px solid #283347; }}
-        .card h3 {{ margin: 0 0 10px 0; color: #8a99ad; font-size: 14px; text-transform: uppercase; }}
-        .card .value {{ font-size: 26px; font-weight: bold; color: #00f2fe; }}
-        table {{ width: 100%; border-collapse: collapse; background: #181f2c; border-radius: 12px; overflow: hidden; }}
-        th, td {{ padding: 14px 18px; text-align: left; border-bottom: 1px solid #283347; font-size: 14px; }}
-        th {{ background: #202b3d; color: #8a99ad; }}
-        .badge {{ padding: 4px 8px; border-radius: 4px; font-weight: bold; }}
-        .badge-buy {{ background: #00c07624; color: #00c076; }}
-        .badge-sell {{ background: #ff475724; color: #ff4757; }}
-        a {{ color: #00f2fe; text-decoration: none; }}
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0e1118; color: #fff; margin: 0; padding: 30px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .card { background: #181f2c; padding: 20px; border-radius: 12px; border: 1px solid #283347; }
+        .card h3 { margin: 0 0 10px 0; color: #8a99ad; font-size: 14px; text-transform: uppercase; }
+        .card .value { font-size: 26px; font-weight: bold; color: #00f2fe; }
+        table { width: 100%; border-collapse: collapse; background: #181f2c; border-radius: 12px; overflow: hidden; }
+        th, td { padding: 14px 18px; text-align: left; border-bottom: 1px solid #283347; font-size: 14px; }
+        th { background: #202b3d; color: #8a99ad; }
+        .badge { padding: 4px 8px; border-radius: 4px; font-weight: bold; }
+        .badge-buy { background: #00c07624; color: #00c076; }
+        .badge-sell { background: #ff475724; color: #ff4757; }
+        a { color: #00f2fe; text-decoration: none; }
     </style>
 </head>
 <body>
@@ -41,6 +52,20 @@ HTML_TEMPLATE = """
 """
 
 async def dashboard_handler(request):
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Basic '):
+        return web.Response(status=401, headers={'WWW-Authenticate': 'Basic realm="Owner Dashboard"'})
+    
+    try:
+        encoded_credentials = auth_header.split(' ')[1]
+        decoded_credentials = base64.b64decode(encoded_credentials).decode('utf-8')
+        username, password = decoded_credentials.split(':', 1)
+        
+        if username != DASHBOARD_USER or password != DASHBOARD_PASS:
+            return web.Response(status=401, headers={'WWW-Authenticate': 'Basic realm="Owner Dashboard"'})
+    except Exception:
+        return web.Response(status=401, headers={'WWW-Authenticate': 'Basic realm="Owner Dashboard"'})
+
     try:
         data = get_dashboard_metrics()
         rows = ""

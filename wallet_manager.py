@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import stat
 from eth_account import Account
 from cryptography.fernet import Fernet
 from solana_engine import generate_solana_wallet
@@ -14,6 +15,12 @@ def load_or_generate_key():
         key = Fernet.generate_key()
         with open(KEY_FILE, "wb") as f:
             f.write(key)
+        
+        # حماية ملف التشفير على مستوى السيرفر
+        try:
+            os.chmod(KEY_FILE, stat.S_IRUSR | stat.S_IWUSR)
+        except Exception:
+            pass
     else:
         with open(KEY_FILE, "rb") as f:
             key = f.read()
@@ -24,7 +31,6 @@ cipher = load_or_generate_key()
 def init_wallet_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    # ترقية الجدول لدعم المحافظ المتعددة
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users_wallets (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,10 +61,13 @@ def get_or_create_wallet(user_id: int, chain_type: str = 'EVM', is_master: int =
         new_account = Account.create()
         address = new_account.address
         private_key = new_account.key.hex()
-    else:
+    elif chain_type == 'SOLANA':
         sol_wallet = generate_solana_wallet()
         address = sol_wallet["address"]
         private_key = sol_wallet["private_key"]
+    else:
+        conn.close()
+        raise ValueError(f"Unsupported chain type: {chain_type}")
 
     encrypted_key = cipher.encrypt(private_key.encode()).decode()
 
@@ -83,6 +92,9 @@ def get_decrypted_private_key(user_id: int, chain_type: str = 'EVM', is_master: 
     if not row:
         return None
 
-    return cipher.decrypt(row[0].encode()).decode()
+    try:
+        return cipher.decrypt(row[0].encode()).decode()
+    except Exception:
+        raise ValueError("Critical Security Error: Cannot decrypt private key. secret.key might be corrupted.")
 
 init_wallet_db()
