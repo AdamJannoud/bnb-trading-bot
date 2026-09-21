@@ -72,18 +72,21 @@ async def track_mempool(target_wallets: set):
 async def process_pending_tx(tx_hash: str, target_wallets: set):
     try:
         tx = await w3.eth.get_transaction(tx_hash)
-        if tx and tx['from'].lower() in target_wallets and tx['to'] and tx['to'].lower() == ROUTER_ADDRESS:
-            logging.info(f"🚨 Target Whale Activity Detected: {tx['from']}")
+        if not tx or not tx.get('to'):
+            return
+
+        if tx['from'].lower() in target_wallets and tx['to'].lower() == ROUTER_ADDRESS:
+            valid_selectors = ["0x7ff36ab5", "0xb6f9de95"]
+            input_data = tx.get('input', '')
             
-            func_obj, func_params = router_contract.decode_function_input(tx['input'])
-            
-            if 'path' in func_params and len(func_params['path']) >= 2:
-                token_address = func_params['path'][-1]
-                logging.info(f"Whale is buying token: {token_address}. Executing Copy Trade...")
+            if len(input_data) >= 10 and input_data[:10].lower() in valid_selectors:
+                func_obj, func_params = router_contract.decode_function_input(input_data)
                 
-                asyncio.create_task(execute_copy_trade(tx['from'].lower(), token_address))
-                
-    except Exception:
+                if 'path' in func_params and len(func_params['path']) >= 2:
+                    token_address = func_params['path'][-1]
+                    logging.info(f"🚨 Whale {tx['from']} buying: {token_address}. Executing Copy...")
+                    asyncio.create_task(execute_copy_trade(tx['from'].lower(), token_address))
+    except Exception as e:
         pass
 
 async def execute_copy_trade(whale_address: str, token_address: str):

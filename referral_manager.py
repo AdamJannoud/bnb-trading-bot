@@ -4,8 +4,13 @@ import time
 
 DB_PATH = "bot_database.db"
 
+def get_db_connection():
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    return conn
+
 def init_referral_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS referrals (
@@ -21,7 +26,7 @@ def register_referral(user_id: int, referred_by: int):
     if user_id == referred_by:
         return
         
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT user_id FROM referrals WHERE user_id = ?", (user_id,))
     if not cursor.fetchone():
@@ -33,7 +38,7 @@ def register_referral(user_id: int, referred_by: int):
     conn.close()
 
 def calculate_fee_split(total_fee_wei: int, user_id: int) -> dict:
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT referred_by FROM referrals WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()

@@ -10,13 +10,17 @@ Account.enable_unaudited_hdwallet_features()
 DB_NAME = "bot_database.db"
 KEY_FILE = "secret.key"
 
+def get_db_connection():
+    conn = sqlite3.connect(DB_NAME, timeout=30.0)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    return conn
+
 def load_or_generate_key():
     if not os.path.exists(KEY_FILE):
         key = Fernet.generate_key()
         with open(KEY_FILE, "wb") as f:
             f.write(key)
         
-        # حماية ملف التشفير على مستوى السيرفر
         try:
             os.chmod(KEY_FILE, stat.S_IRUSR | stat.S_IWUSR)
         except Exception:
@@ -29,7 +33,7 @@ def load_or_generate_key():
 cipher = load_or_generate_key()
 
 def init_wallet_db():
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users_wallets (
@@ -45,7 +49,7 @@ def init_wallet_db():
     conn.close()
 
 def get_or_create_wallet(user_id: int, chain_type: str = 'EVM', is_master: int = 1):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         "SELECT address FROM users_wallets WHERE user_id = ? AND chain_type = ? AND is_master = ?", 
@@ -80,7 +84,7 @@ def get_or_create_wallet(user_id: int, chain_type: str = 'EVM', is_master: int =
     return {"address": address, "is_new": True}
 
 def get_decrypted_private_key(user_id: int, chain_type: str = 'EVM', is_master: int = 1):
-    conn = sqlite3.connect(DB_NAME)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         "SELECT encrypted_private_key FROM users_wallets WHERE user_id = ? AND chain_type = ? AND is_master = ?", 

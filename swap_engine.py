@@ -16,7 +16,7 @@ CHAIN_ID = CONFIG["CHAIN_ID"]
 ROUTER_ADDRESS = AsyncWeb3.to_checksum_address(CONFIG["PANCAKESWAP_ROUTER"])
 WBNB_ADDRESS = AsyncWeb3.to_checksum_address(CONFIG["WBNB_ADDRESS"])
 FEE_PERCENTAGE = Decimal(str(CONFIG.get("FEE_PERCENTAGE", 1.0)))
-SLIPPAGE_TOLERANCE = 0.05  # 5% Slippage Protection
+SLIPPAGE_TOLERANCE = 0.05
 
 w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(RPC_URL))
 private_w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(PRIVATE_RPC_URL))
@@ -95,27 +95,6 @@ async def execute_buy_async(private_key: str, token_address: str, amount_bnb: fl
     current_nonce = await active_w3.eth.get_transaction_count(user_address, "pending")
     gas_price = await active_w3.eth.gas_price
 
-    fee_splits = calculate_fee_split(fee_amount_wei, user_id)
-    if fee_splits["owner_share"] > 0:
-        owner_wallet = AsyncWeb3.to_checksum_address(CONFIG["OWNER_FEE_WALLET"])
-        fee_tx_owner = {
-            "nonce": current_nonce, "to": owner_wallet, "value": fee_splits["owner_share"],
-            "gas": 21000, "gasPrice": gas_price, "chainId": CHAIN_ID
-        }
-        signed_owner = active_w3.eth.account.sign_transaction(fee_tx_owner, private_key)
-        await active_w3.eth.send_raw_transaction(signed_owner.raw_transaction)
-        current_nonce += 1
-
-    if fee_splits["referrer_share"] > 0 and fee_splits["referrer_wallet"]:
-        ref_wallet = AsyncWeb3.to_checksum_address(fee_splits["referrer_wallet"])
-        fee_tx_ref = {
-            "nonce": current_nonce, "to": ref_wallet, "value": fee_splits["referrer_share"],
-            "gas": 21000, "gasPrice": gas_price, "chainId": CHAIN_ID
-        }
-        signed_ref = active_w3.eth.account.sign_transaction(fee_tx_ref, private_key)
-        await active_w3.eth.send_raw_transaction(signed_ref.raw_transaction)
-        current_nonce += 1
-
     router_contract = active_w3.eth.contract(address=ROUTER_ADDRESS, abi=PANCAKE_ROUTER_ABI)
     path = [WBNB_ADDRESS, token_address]
     
@@ -143,6 +122,30 @@ async def execute_buy_async(private_key: str, token_address: str, amount_bnb: fl
     signed_swap_tx = active_w3.eth.account.sign_transaction(swap_txn, private_key)
     tx_hash = await active_w3.eth.send_raw_transaction(signed_swap_tx.raw_transaction)
     
+    await active_w3.eth.wait_for_transaction_receipt(tx_hash)
+
+    fee_splits = calculate_fee_split(fee_amount_wei, user_id)
+    current_nonce = await active_w3.eth.get_transaction_count(user_address, "pending")
+
+    if fee_splits["owner_share"] > 0:
+        owner_wallet = AsyncWeb3.to_checksum_address(CONFIG["OWNER_FEE_WALLET"])
+        fee_tx_owner = {
+            "nonce": current_nonce, "to": owner_wallet, "value": fee_splits["owner_share"],
+            "gas": 21000, "gasPrice": gas_price, "chainId": CHAIN_ID
+        }
+        signed_owner = active_w3.eth.account.sign_transaction(fee_tx_owner, private_key)
+        await active_w3.eth.send_raw_transaction(signed_owner.raw_transaction)
+        current_nonce += 1
+
+    if fee_splits["referrer_share"] > 0 and fee_splits["referrer_wallet"]:
+        ref_wallet = AsyncWeb3.to_checksum_address(fee_splits["referrer_wallet"])
+        fee_tx_ref = {
+            "nonce": current_nonce, "to": ref_wallet, "value": fee_splits["referrer_share"],
+            "gas": 21000, "gasPrice": gas_price, "chainId": CHAIN_ID
+        }
+        signed_ref = active_w3.eth.account.sign_transaction(fee_tx_ref, private_key)
+        await active_w3.eth.send_raw_transaction(signed_ref.raw_transaction)
+
     fee_bnb_float = float(active_w3.from_wei(fee_amount_wei, "ether"))
     log_trade(user_id, "BUY", token_address, amount_bnb, fee_bnb_float, tx_hash.hex())
 
@@ -200,12 +203,14 @@ async def execute_sell_async(private_key: str, token_address: str, percent: floa
 
     signed_swap = active_w3.eth.account.sign_transaction(swap_txn, private_key)
     tx_hash = await active_w3.eth.send_raw_transaction(signed_swap.raw_transaction)
-    await active_w3.eth.wait_for_transaction_receipt(tx_hash)
-
+    
+    receipt = await active_w3.eth.wait_for_transaction_receipt(tx_hash)
+    gas_spent_wei = receipt['gasUsed'] * receipt.get('effectiveGasPrice', gas_price)
+    
     final_bnb = await active_w3.eth.get_balance(user_address)
-    received_bnb_wei = final_bnb - initial_bnb
+    received_bnb_wei = (final_bnb + gas_spent_wei) - initial_bnb
 
-    fee_cut_bnb = 0.0
+    fee_wei = 0
     if received_bnb_wei > 0:
         fee_wei = int(received_bnb_wei * (FEE_PERCENTAGE / Decimal("100")))
         if fee_wei > 0:
@@ -214,13 +219,18 @@ async def execute_sell_async(private_key: str, token_address: str, percent: floa
             
             if fee_splits["owner_share"] > 0:
                 fee_tx_owner = {
-                    "nonce": fee_nonce, "to": AsyncWeb3.to_checksum_address(CONFIG["OWNER_FEE_WALLET"]), 
-                    "value": fee_splits["owner_share"], "gas": 21000, "gasPrice": gas_price, "chainId": CHAIN_ID
+                    "nonce": fee_nonce, 
+                    "to": AsyncWeb3.to_checksum_address(CONFIG["OWNER_FEE_WALLET"]), 
+                    "value": fee_splits["owner_share"], 
+                    "gas": 21000, 
+                    "gasPrice": gas_price, 
+                    "chainId": CHAIN_ID
                 }
                 signed_owner = active_w3.eth.account.sign_transaction(fee_tx_owner, private_key)
                 await active_w3.eth.send_raw_transaction(signed_owner.raw_transaction)
 
-    sold_amount_bnb = float(active_w3.from_wei(received_bnb_wei, "ether"))
-    log_trade(user_id, "SELL", token_address, sold_amount_bnb, float(active_w3.from_wei(fee_wei, "ether")), tx_hash.hex())
+    sold_amount_bnb = float(active_w3.from_wei(max(0, received_bnb_wei), "ether"))
+    fee_bnb_float = float(active_w3.from_wei(fee_wei, "ether"))
+    log_trade(user_id, "SELL", token_address, sold_amount_bnb, fee_bnb_float, tx_hash.hex())
 
     return {"success": True, "tx_hash": tx_hash.hex()}

@@ -4,9 +4,8 @@ from web3 import AsyncWeb3
 async def simulate_transaction(rpc_url: str, tx_params: dict) -> dict:
     w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(rpc_url))
     
-    sim_params = tx_params.copy()
-    if 'chainId' in sim_params:
-        del sim_params['chainId']
+    ignored_keys = {'chainId', 'nonce', 'gasPrice', 'maxFeePerGas', 'maxPriorityFeePerGas'}
+    sim_params = {k: v for k, v in tx_params.items() if k not in ignored_keys}
         
     try:
         result = await w3.eth.call(sim_params)

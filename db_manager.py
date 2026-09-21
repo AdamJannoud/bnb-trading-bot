@@ -3,8 +3,13 @@ import time
 
 DB_PATH = "bot_database.db"
 
+def get_db_connection():
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    return conn
+
 def init_extended_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     cursor.execute("""
@@ -36,7 +41,7 @@ def init_extended_db():
     conn.close()
 
 def log_trade(user_id: int, trade_type: str, token_addr: str, amount_bnb: float, fee_bnb: float, tx_hash: str):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO trade_history (user_id, trade_type, token_address, amount_bnb, fee_bnb, tx_hash, timestamp)
@@ -46,7 +51,7 @@ def log_trade(user_id: int, trade_type: str, token_addr: str, amount_bnb: float,
     conn.close()
 
 def add_position(user_id: int, token_addr: str, entry_price: float, tp_percent: float, sl_percent: float):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
         INSERT INTO active_positions (user_id, token_address, entry_price, tp_percent, sl_percent, is_active, created_at)
@@ -56,7 +61,7 @@ def add_position(user_id: int, token_addr: str, entry_price: float, tp_percent: 
     conn.close()
 
 def get_active_positions():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM active_positions WHERE is_active = 1")
@@ -65,14 +70,14 @@ def get_active_positions():
     return rows
 
 def close_position(pos_id: int):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("UPDATE active_positions SET is_active = 0 WHERE id = ?", (pos_id,))
     conn.commit()
     conn.close()
 
 def get_dashboard_metrics():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     cursor = conn.cursor()
 
     total_users = 0
@@ -114,7 +119,7 @@ def get_dashboard_metrics():
     }
 
 def init_copy_trading_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS copy_targets (
@@ -128,7 +133,7 @@ def init_copy_trading_db():
     conn.close()
 
 def add_whale_target(user_id: int, whale_address: str, buy_amount: float):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
         "INSERT INTO copy_targets (user_id, whale_address, buy_amount) VALUES (?, ?, ?)",
@@ -138,7 +143,7 @@ def add_whale_target(user_id: int, whale_address: str, buy_amount: float):
     conn.close()
 
 def get_all_whale_addresses() -> set:
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     cursor = conn.cursor()
     try:
         cursor.execute("SELECT DISTINCT whale_address FROM copy_targets")
@@ -151,7 +156,7 @@ def get_all_whale_addresses() -> set:
     return addresses
 
 def get_whale_followers(whale_address: str) -> list:
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_db_connection()
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     cursor.execute("SELECT user_id, buy_amount FROM copy_targets WHERE whale_address = ?", (whale_address.lower(),))

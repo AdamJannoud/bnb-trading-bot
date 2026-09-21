@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import re
+import os
 import aiohttp
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, CommandObject
@@ -22,6 +23,8 @@ from mempool_listener import track_mempool
 CONFIG_PATH = "config.json"
 
 def load_config():
+    if not os.path.exists(CONFIG_PATH):
+        raise FileNotFoundError("config.json file is missing! Please copy config.example.json to config.json and fill in the details.")
     with open(CONFIG_PATH, "r") as f:
         return json.load(f)
 
@@ -287,17 +290,21 @@ async def cmd_wallet(message: types.Message):
 @dp.callback_query(F.data == "show_pk")
 async def show_pk(cq: types.CallbackQuery):
     pk = get_decrypted_private_key(cq.from_user.id)
-    msg = await cq.message.answer(
-        f"⚠️ *Private Key (Confidential):*\n`{pk}`\n\n_This message will self-destruct in 30 seconds._", 
-        parse_mode="Markdown"
-    )
-    await cq.answer()
-    
-    await asyncio.sleep(30)
     try:
-        await msg.delete()
+        msg = await bot.send_message(
+            chat_id=cq.from_user.id,
+            text=f"⚠️ *Private Key (Confidential):*\n`{pk}`\n\n_This message will self-destruct in 30 seconds._", 
+            parse_mode="Markdown"
+        )
+        await cq.answer("Key sent to your private chat 🔒", show_alert=True)
+        
+        await asyncio.sleep(30)
+        try:
+            await msg.delete()
+        except Exception:
+            pass
     except Exception:
-        pass
+        await cq.answer("⚠️ Please start a private chat with the bot first to receive the key securely.", show_alert=True)
 
 async def set_bot_commands(bot: Bot):
     commands = [
