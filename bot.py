@@ -4,9 +4,9 @@ import logging
 import re
 import os
 import aiohttp
-from aiogram import Bot, Dispatcher, types, F
+from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command, CommandObject
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BotCommand
+from aiogram.types import BotCommand
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiohttp import web
@@ -137,7 +137,7 @@ async def cmd_start(message: types.Message, command: CommandObject):
         "📥 *Your Deposit Address:*\n"
         f"`{address}`\n\n"
         "⚙️ *Quick Guide:*\n"
-        "🔹 `/wallet` - View balance & export private key\n"
+        "🔹 `/wallet` - View address & balance\n"
         "🔹 `/buy <token> <amount>` - Instant MEV-protected buy\n"
         "🔹 `/sell <token> <%>` - Instant sell\n"
         "🔹 `/autotrade <token> <amount> <tp%> <sl%>` - Automated trading\n"
@@ -283,33 +283,15 @@ async def cmd_wallet(message: types.Message):
     wallet = get_or_create_wallet(user_id, chain_type='EVM', is_master=1)
     balance = await get_bnb_balance_async(wallet["address"])
     
+    # No key export here: private keys never leave the process through a reply.
+    # The owner can export one on the server itself with wallet_tools.py.
     text = f"💼 *Wallet Dashboard*\n\n*Address:* `{wallet['address']}`\n*Balance:* `{balance:.4f} BNB`"
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔑 Export Private Key", callback_data="show_pk")]])
-    await message.answer(text, parse_mode="Markdown", reply_markup=kb)
-
-@dp.callback_query(F.data == "show_pk")
-async def show_pk(cq: types.CallbackQuery):
-    pk = get_decrypted_private_key(cq.from_user.id)
-    try:
-        msg = await bot.send_message(
-            chat_id=cq.from_user.id,
-            text=f"⚠️ *Private Key (Confidential):*\n`{pk}`\n\n_This message will self-destruct in 30 seconds._", 
-            parse_mode="Markdown"
-        )
-        await cq.answer("Key sent to your private chat 🔒", show_alert=True)
-        
-        await asyncio.sleep(30)
-        try:
-            await msg.delete()
-        except Exception:
-            pass
-    except Exception:
-        await cq.answer("⚠️ Please start a private chat with the bot first to receive the key securely.", show_alert=True)
+    await message.answer(text, parse_mode="Markdown")
 
 async def set_bot_commands(bot: Bot):
     commands = [
         BotCommand(command="start", description="🚀 Main menu & deposit address"),
-        BotCommand(command="wallet", description="💼 View balance & export private key"),
+        BotCommand(command="wallet", description="💼 View address & balance"),
         BotCommand(command="buy", description="⚡ Instant buy (Anti-MEV)"),
         BotCommand(command="sell", description="📉 Instant sell"),
         BotCommand(command="autotrade", description="🤖 Automated trade with TP/SL"),

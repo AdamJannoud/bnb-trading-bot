@@ -5,8 +5,8 @@ working directory at import time, so the whole session runs inside a scratch
 directory holding a copy of config.example.json. No network, no real keys:
 sockets are blocked, and web3 is replaced by FakeW3 below.
 """
+import json
 import os
-import shutil
 import socket
 import sys
 import tempfile
@@ -18,7 +18,13 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 SCRATCH = tempfile.mkdtemp(prefix="bnb-bot-tests-")
-shutil.copy(os.path.join(REPO, "config.example.json"), os.path.join(SCRATCH, "config.json"))
+with open(os.path.join(REPO, "config.example.json")) as f:
+    _config = json.load(f)
+# aiogram checks the token's shape when the Bot object is built (no request is
+# made); this placeholder only satisfies that check.
+_config["BOT_TOKEN"] = "0:offline-test-placeholder"
+with open(os.path.join(SCRATCH, "config.json"), "w") as f:
+    json.dump(_config, f)
 os.chdir(SCRATCH)
 # A throwaway key made for this test session only; it never leaves the process.
 os.environ["WALLET_ENCRYPTION_KEY"] = Fernet.generate_key().decode()

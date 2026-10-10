@@ -85,12 +85,19 @@ python -m pytest -q
 | Command | Description |
 | :--- | :--- |
 | `/start` | Open the main menu, show deposit wallet, and get referral link[cite: 1]. |
-| `/wallet` | View current BNB balance and export private keys[cite: 1]. |
+| `/wallet` | View your deposit address and current BNB balance. |
 | `/buy <token> <amount>` | Execute an instant swap via PancakeSwap[cite: 1]. |
 | `/sell <token> <percent>` | Sell a percentage (or 100%) of held tokens[cite: 1]. |
 | `/autotrade <token> <bnb> <tp%> <sl%>` | Enter a position with automated Take-Profit and Stop-Loss[cite: 1]. |
 | `/addwhale <address> <amount>` | Add a target wallet to copy trade on mempool events[cite: 1]. |
 | `/dashboard` | View owner analytics dashboard credentials[cite: 1]. |
+
+### Exporting a private key (server only)
+The bot never sends a private key through Telegram; there is no button or command that produces one. If a user needs their key, the owner exports it on the host itself, in an interactive terminal:
+```bash
+python wallet_tools.py export --user-id <telegram_user_id> [--chain EVM|SOLANA]
+```
+The key is printed to that terminal only. The command refuses to run when its output is redirected to a file or a pipe, so it cannot end up in a log by accident.
 
 ---
 
