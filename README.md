@@ -31,7 +31,11 @@ An asynchronous Telegram trading bot built with Python, Web3, and Aiogram[cite: 
 ├── referral_manager.py     # Referral reward calculator and registry[cite: 6]
 ├── dashboard.py            # Basic-auth web dashboard[cite: 3]
 ├── solana_engine.py        # Experimental Solana/Jupiter integration[cite: 9]
+├── risk.py                 # Kill switch, position caps and daily loss cap
+├── wallet_tools.py         # Server-side wallet tools (private-key export)
+├── tests/                  # Offline pytest suite
 ├── config.example.json     # Configuration template[cite: 2]
+├── .env.example            # Environment variables (WALLET_ENCRYPTION_KEY)
 └── requirements.txt        # Python dependency manifest
 ```
 
@@ -63,6 +67,10 @@ Edit `config.json` and provide your credentials[cite: 2]:
 * `OWNER_FEE_WALLET`: EVM address for collecting platform commissions[cite: 2].
 * `RPC_URL` & `WSS_RPC_URL`: Reliable RPC and WebSocket endpoints[cite: 2].
 * `SLIPPAGE_TOLERANCE` (default `0.05`): the fraction below the router's quote that a swap may fill at. Values above `0.15` (or at or below `0`) are refused at startup, because a floor that wide protects nothing.
+
+* `MAX_TRADE_BNB` (default `0.1`): the largest single buy, in BNB, for `/buy`, `/autotrade` and copy-trades.
+* `MAX_OPEN_EXPOSURE_BNB` (default `0.3`): the most BNB one user can have in open positions at once.
+* `DAILY_LOSS_CAP_BNB` (default `0.05`): net realised loss over a rolling 24 hours after which buying pauses for that user.
 
 > **Price protection fails closed.** If the router cannot quote a trade, the trade is not sent: the user is told why and nothing is signed. The quote is taken a second time immediately before signing, and the trade is abandoned if the price has moved past `SLIPPAGE_TOLERANCE` in between.
 
@@ -103,6 +111,17 @@ python -m pytest -q
 | `/autotrade <token> <bnb> <tp%> <sl%>` | Enter a position with automated Take-Profit and Stop-Loss[cite: 1]. |
 | `/addwhale <address> <amount>` | Add a target wallet to copy trade on mempool events[cite: 1]. |
 | `/dashboard` | View owner analytics dashboard credentials[cite: 1]. |
+| `/stop` | Owner only. Stop all buying, including copy-trades. Survives restarts. |
+| `/resume` | Owner only. Re-enable buying after `/stop`. |
+
+### Risk Controls
+Every buy path (`/buy`, `/autotrade` and the copy-trader) passes the same guard (`risk.py`) before anything is signed. Selling is never blocked, so a stop or a cap cannot trap funds.
+
+* **Kill switch:** `/stop` and `/resume`, owner only, stored in the database.
+* **Per-trade cap:** a buy larger than `MAX_TRADE_BNB` is refused.
+* **Open exposure cap:** a buy that would take the user's open positions above `MAX_OPEN_EXPOSURE_BNB` is refused. Every buy opens a position at its BNB cost, and selling closes it.
+* **Daily loss cap:** once realised losses (net of gains, from the trade log) over the last 24 hours reach `DAILY_LOSS_CAP_BNB`, buying pauses for that user until the losses age out of the window, and the owner is messaged.
+* **Positions know their size:** each position records the token amount its buy delivered. A TP/SL exit sells exactly that amount, never the wallet's whole balance. Positions opened before this change have no recorded amount; when their TP/SL triggers they are taken off auto-management and the user is told to exit with `/sell`.
 
 ### Exporting a private key (server only)
 The bot never sends a private key through Telegram; there is no button or command that produces one. If a user needs their key, the owner exports it on the host itself, in an interactive terminal:
@@ -115,4 +134,12 @@ The key is printed to that terminal only. The command refuses to run when its ou
 
 ## ⚠️ Disclaimer
 
-> **Educational and Research Purposes Only**: This codebase is published as a proof-of-concept open-source repository and is **not actively maintained**. Cryptocurrency trading, MEV sniping, and automated scripts carry significant financial risk. The authors are not responsible for any financial losses, slippage, failed transactions, or security breaches resulting from the use or deployment of this software. Use at your own risk.
+> **Educational and Research Purposes Only**: This codebase is published as a proof-of-concept open-source repository. Cryptocurrency trading, MEV sniping, and automated scripts carry significant financial risk. The authors are not responsible for any financial losses, slippage, failed transactions, or security breaches resulting from the use or deployment of this software. Use at your own risk.
+
+---
+
+## 👤 Maintainer & Attribution
+
+Maintained by **AdamJannoud** (<jannoud-adam@hotmail.com>). Released under the MIT License; see [`LICENSE`](LICENSE).
+
+The maintainer commits to keeping this release's security fixes intact: fail-closed price quotes with a re-quote at signing, no private-key export through Telegram, a required `WALLET_ENCRYPTION_KEY` with refuse-to-start when it is missing or wrong, and the risk controls above. Changes that weaken any of them will not be accepted.

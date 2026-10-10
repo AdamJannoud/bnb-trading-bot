@@ -3,7 +3,8 @@ import time
 import asyncio
 from decimal import Decimal
 from web3 import AsyncWeb3
-from db_manager import log_trade
+from db_manager import log_trade, add_position, realise_sell
+from risk import check_buy
 from referral_manager import calculate_fee_split
 from tx_simulator import simulate_transaction
 
@@ -110,7 +111,20 @@ async def get_bnb_balance_async(address: str) -> float:
     balance_wei = await w3.eth.get_balance(AsyncWeb3.to_checksum_address(address))
     return float(w3.from_wei(balance_wei, "ether"))
 
-async def execute_buy_async(private_key: str, token_address: str, amount_bnb: float, user_id: int = 0, use_private_rpc: bool = False):
+# One buy at a time per user, so two concurrent buys cannot both pass the exposure cap.
+_buy_locks = {}
+
+async def execute_buy_async(private_key: str, token_address: str, amount_bnb: float, user_id: int = 0, use_private_rpc: bool = False,
+                            entry_price: float = None, tp_percent: float = None, sl_percent: float = None):
+    lock = _buy_locks.setdefault(user_id, asyncio.Lock())
+    async with lock:
+        refusal = check_buy(user_id, amount_bnb)
+        if refusal:
+            return {"success": False, "error": refusal}
+        return await _execute_buy(private_key, token_address, amount_bnb, user_id, use_private_rpc,
+                                  entry_price, tp_percent, sl_percent)
+
+async def _execute_buy(private_key, token_address, amount_bnb, user_id, use_private_rpc, entry_price, tp_percent, sl_percent):
     active_w3 = private_w3 if use_private_rpc else w3
     account = active_w3.eth.account.from_key(private_key)
     user_address = account.address
@@ -128,6 +142,7 @@ async def execute_buy_async(private_key: str, token_address: str, amount_bnb: fl
     gas_price = await active_w3.eth.gas_price
 
     router_contract = active_w3.eth.contract(address=ROUTER_ADDRESS, abi=PANCAKE_ROUTER_ABI)
+    token_contract = active_w3.eth.contract(address=token_address, abi=ERC20_ABI)
     path = [WBNB_ADDRESS, token_address]
     
     try:
@@ -155,10 +170,16 @@ async def execute_buy_async(private_key: str, token_address: str, amount_bnb: fl
     except QuoteError as e:
         return {"success": False, "error": str(e)}
 
+    tokens_before = await token_contract.functions.balanceOf(user_address).call()
     signed_swap_tx = active_w3.eth.account.sign_transaction(swap_txn, private_key)
     tx_hash = await active_w3.eth.send_raw_transaction(signed_swap_tx.raw_transaction)
     
     await active_w3.eth.wait_for_transaction_receipt(tx_hash)
+
+    # The position is what this swap delivered, not the wallet's whole balance.
+    tokens_received = max(0, await token_contract.functions.balanceOf(user_address).call() - tokens_before)
+    add_position(user_id, token_address, entry_price, tp_percent, sl_percent,
+                 token_amount=tokens_received, cost_bnb=amount_bnb)
 
     fee_splits = calculate_fee_split(fee_amount_wei, user_id)
     current_nonce = await active_w3.eth.get_transaction_count(user_address, "pending")
@@ -185,9 +206,12 @@ async def execute_buy_async(private_key: str, token_address: str, amount_bnb: fl
     fee_bnb_float = float(active_w3.from_wei(fee_amount_wei, "ether"))
     log_trade(user_id, "BUY", token_address, amount_bnb, fee_bnb_float, tx_hash.hex())
 
-    return {"success": True, "tx_hash": tx_hash.hex(), "swapped_bnb": float(active_w3.from_wei(swap_amount_wei, "ether"))}
+    return {"success": True, "tx_hash": tx_hash.hex(), "swapped_bnb": float(active_w3.from_wei(swap_amount_wei, "ether")),
+            "token_amount": tokens_received}
 
-async def execute_sell_async(private_key: str, token_address: str, percent: float = 100.0, user_id: int = 0, use_private_rpc: bool = False):
+async def execute_sell_async(private_key: str, token_address: str, percent: float = 100.0, user_id: int = 0, use_private_rpc: bool = False,
+                             token_amount: int = None, position_id: int = None):
+    """Sell `percent` of the wallet's balance, or exactly `token_amount` (capped at the balance) when given."""
     active_w3 = private_w3 if use_private_rpc else w3
     account = active_w3.eth.account.from_key(private_key)
     user_address = account.address
@@ -200,7 +224,12 @@ async def execute_sell_async(private_key: str, token_address: str, percent: floa
     if balance_raw == 0:
         return {"success": False, "error": "Token balance is 0."}
 
-    amount_to_sell = int(Decimal(balance_raw) * (Decimal(str(percent)) / Decimal("100")))
+    if token_amount is not None:
+        amount_to_sell = min(int(token_amount), balance_raw)
+    else:
+        amount_to_sell = int(Decimal(balance_raw) * (Decimal(str(percent)) / Decimal("100")))
+    if amount_to_sell <= 0:
+        return {"success": False, "error": "Nothing to sell."}
     current_nonce = await active_w3.eth.get_transaction_count(user_address, "pending")
     gas_price = await active_w3.eth.gas_price
 
@@ -271,6 +300,7 @@ async def execute_sell_async(private_key: str, token_address: str, percent: floa
 
     sold_amount_bnb = float(active_w3.from_wei(max(0, received_bnb_wei), "ether"))
     fee_bnb_float = float(active_w3.from_wei(fee_wei, "ether"))
-    log_trade(user_id, "SELL", token_address, sold_amount_bnb, fee_bnb_float, tx_hash.hex())
+    realised_pnl = realise_sell(user_id, token_address, amount_to_sell, sold_amount_bnb - fee_bnb_float, position_id)
+    log_trade(user_id, "SELL", token_address, sold_amount_bnb, fee_bnb_float, tx_hash.hex(), realised_pnl)
 
-    return {"success": True, "tx_hash": tx_hash.hex()}
+    return {"success": True, "tx_hash": tx_hash.hex(), "sold_amount": amount_to_sell, "realised_pnl_bnb": realised_pnl}

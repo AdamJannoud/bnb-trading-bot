@@ -6,6 +6,7 @@ from web3 import AsyncWeb3
 from db_manager import get_whale_followers
 from wallet_manager import get_decrypted_private_key
 from swap_engine import execute_buy_async
+import risk
 
 logging.basicConfig(level=logging.INFO)
 
@@ -95,20 +96,28 @@ async def execute_copy_trade(whale_address: str, token_address: str):
         return
         
     tasks = []
+    task_users = []
     for follower in followers:
         user_id = follower['user_id']
         buy_amount = follower['buy_amount']
-        
+
+        # Kill switch and caps first: a refused copy never touches the key.
+        refusal = risk.check_buy(user_id, buy_amount)
+        if refusal:
+            logging.info(f"Copy trade skipped for user {user_id}: {refusal}")
+            continue
+
         private_key = get_decrypted_private_key(user_id)
         if private_key:
             tasks.append(
                 execute_buy_async(private_key, token_address, buy_amount, user_id, use_private_rpc=True)
             )
+            task_users.append(user_id)
             
     if tasks:
         results = await asyncio.gather(*tasks, return_exceptions=True)
         for i, res in enumerate(results):
             if isinstance(res, dict) and res.get('success'):
-                logging.info(f"✅ Copy Trade Success for user {followers[i]['user_id']} | TX: {res['tx_hash']}")
+                logging.info(f"✅ Copy Trade Success for user {task_users[i]} | TX: {res['tx_hash']}")
             else:
-                logging.error(f"❌ Copy Trade Failed for user {followers[i]['user_id']} | Error: {res}")
+                logging.error(f"❌ Copy Trade Failed for user {task_users[i]} | Error: {res}")

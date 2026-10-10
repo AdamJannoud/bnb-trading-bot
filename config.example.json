@@ -5,6 +5,10 @@
     "FEE_PERCENTAGE": 1.0,
     "SLIPPAGE_TOLERANCE": 0.05,
 
+    "MAX_TRADE_BNB": 0.1,
+    "MAX_OPEN_EXPOSURE_BNB": 0.3,
+    "DAILY_LOSS_CAP_BNB": 0.05,
+
     "DASHBOARD_USER": "admin",
     "DASHBOARD_PASS": "admin123",
 

@@ -15,7 +15,8 @@ from wallet_manager import get_or_create_wallet, get_decrypted_private_key
 from swap_engine import execute_buy_async, execute_sell_async, get_bnb_balance_async
 from signals_scanner import fetch_trending_signals
 from security_scanner import check_token_security
-from db_manager import add_position, get_active_positions, close_position, add_whale_target, get_all_whale_addresses
+from db_manager import get_active_positions, close_position, add_whale_target, get_all_whale_addresses
+import risk
 from dashboard import create_dashboard_app
 from referral_manager import register_referral
 from mempool_listener import track_mempool
@@ -63,47 +64,87 @@ async def get_live_token_price(token_address: str) -> float:
         pass
     return 0.0
 
+def is_owner(user_id: int) -> bool:
+    return user_id == CONFIG.get("OWNER_TELEGRAM_ID")
+
+_loss_cap_notified = {}
+
+async def notify_owner_if_loss_cap(user_id: int):
+    """Tell the owner once per rolling window that a user's buying has paused on the daily loss cap."""
+    owner_id = CONFIG.get("OWNER_TELEGRAM_ID")
+    if not owner_id or not risk.loss_cap_hit(user_id):
+        return
+    now = asyncio.get_running_loop().time()
+    if now - _loss_cap_notified.get(user_id, -risk.LOSS_WINDOW_SECONDS) < risk.LOSS_WINDOW_SECONDS:
+        return
+    _loss_cap_notified[user_id] = now
+    try:
+        await bot.send_message(owner_id, f"🛑 Daily loss cap reached for user {user_id} "
+                                         f"({risk.realised_loss_24h(user_id):.4f} BNB). Buying is paused for them; selling stays open.")
+    except Exception as e:
+        logging.error(f"Could not notify owner about loss cap: {e}")
+
+async def check_position(pos: dict):
+    # Plain buys are positions for exposure only: no TP/SL to watch.
+    if pos["tp_percent"] is None or pos["sl_percent"] is None or not pos["entry_price"]:
+        return
+    token = pos["token_address"]
+    current_price = await get_live_token_price(token)
+    if current_price <= 0 or pos["entry_price"] <= 0:
+        return
+
+    change_pct = ((current_price - pos["entry_price"]) / pos["entry_price"]) * 100
+
+    hit_tp = change_pct >= pos["tp_percent"]
+    hit_sl = change_pct <= -abs(pos["sl_percent"])
+    if not (hit_tp or hit_sl):
+        return
+
+    reason = "Take-Profit" if hit_tp else "Stop-Loss"
+    user_id = pos["user_id"]
+
+    if not pos.get("token_amount") or int(pos["token_amount"]) <= 0:
+        # Opened before positions recorded their quantity. Selling the wallet's whole
+        # balance could dump tokens this position never bought, so stop watching it.
+        close_position(pos["id"])
+        await bot.send_message(
+            user_id,
+            f"⚠️ *Auto {reason} not executed*\n\n• *Token:* `{token}`\n"
+            f"This position has no recorded token amount, so it is no longer auto-managed. Use /sell to exit it.",
+            parse_mode="Markdown"
+        )
+        return
+
+    pk = get_decrypted_private_key(user_id)
+    res = await execute_sell_async(pk, token, 100.0, user_id, use_private_rpc=True,
+                                   token_amount=int(pos["token_amount"]), position_id=pos["id"])
+
+    if res.get("success"):
+        close_position(pos["id"])
+        alert = (
+            f"🎯 *Auto {reason} Executed!*\n\n"
+            f"• *Token:* `{token}`\n"
+            f"• *Trigger PnL:* `{change_pct:+.2f}%`\n"
+            f"🔗 [View on BscScan](https://bscscan.com/tx/{res['tx_hash']})"
+        )
+    else:
+        error_msg = escape_md(res.get('error', 'Execution reverted'))
+        alert = (
+            f"⚠️ *Auto {reason} Failed!*\n\n"
+            f"• *Token:* `{token}`\n"
+            f"• *Error:* `{error_msg}`\n"
+            f"Bot will retry next tick."
+        )
+
+    await bot.send_message(user_id, alert, parse_mode="Markdown")
+    if res.get("success"):
+        await notify_owner_if_loss_cap(user_id)
+
 async def tpsl_monitor_task():
     while True:
         try:
-            positions = get_active_positions()
-            for pos in positions:
-                token = pos["token_address"]
-                current_price = await get_live_token_price(token)
-                if current_price <= 0 or pos["entry_price"] <= 0:
-                    continue
-
-                change_pct = ((current_price - pos["entry_price"]) / pos["entry_price"]) * 100
-
-                hit_tp = change_pct >= pos["tp_percent"]
-                hit_sl = change_pct <= -abs(pos["sl_percent"])
-
-                if hit_tp or hit_sl:
-                    reason = "Take-Profit" if hit_tp else "Stop-Loss"
-                    user_id = pos["user_id"]
-                    pk = get_decrypted_private_key(user_id)
-                    
-                    res = await execute_sell_async(pk, token, 100.0, user_id, use_private_rpc=True)
-                    
-                    if res.get("success"):
-                        close_position(pos["id"])
-                        alert = (
-                            f"🎯 *Auto {reason} Executed!*\n\n"
-                            f"• *Token:* `{token}`\n"
-                            f"• *Trigger PnL:* `{change_pct:+.2f}%`\n"
-                            f"🔗 [View on BscScan](https://bscscan.com/tx/{res['tx_hash']})"
-                        )
-                    else:
-                        error_msg = escape_md(res.get('error', 'Execution reverted'))
-                        alert = (
-                            f"⚠️ *Auto {reason} Failed!*\n\n"
-                            f"• *Token:* `{token}`\n"
-                            f"• *Error:* `{error_msg}`\n"
-                            f"Bot will retry next tick."
-                        )
-                    
-                    await bot.send_message(user_id, alert, parse_mode="Markdown")
-
+            for pos in get_active_positions():
+                await check_position(pos)
         except Exception as e:
             logging.error(f"Error in TP/SL monitor: {e}")
         await asyncio.sleep(10)
@@ -147,6 +188,28 @@ async def cmd_start(message: types.Message, command: CommandObject):
     )
     await message.answer(welcome_text, parse_mode="Markdown")
 
+@dp.message(Command("stop"))
+async def cmd_stop(message: types.Message):
+    if not is_owner(message.from_user.id):
+        return await message.answer("❌ Access denied. Owner only.")
+    risk.set_buying_stopped(True)
+    await message.answer("🛑 *Buying stopped* for every user, including copy-trading. Selling stays open. Use /resume to re-enable.", parse_mode="Markdown")
+
+@dp.message(Command("resume"))
+async def cmd_resume(message: types.Message):
+    if not is_owner(message.from_user.id):
+        return await message.answer("❌ Access denied. Owner only.")
+    risk.set_buying_stopped(False)
+    await message.answer("✅ *Buying resumed.*", parse_mode="Markdown")
+
+async def refuse_if_risky(message: types.Message, amount_bnb: float) -> bool:
+    refusal = risk.check_buy(message.from_user.id, amount_bnb)
+    if refusal:
+        await message.answer(f"🛑 *Trade refused:*\n`{escape_md(refusal)}`", parse_mode="Markdown")
+        await notify_owner_if_loss_cap(message.from_user.id)
+        return True
+    return False
+
 @dp.message(Command("dashboard"))
 async def cmd_dashboard(message: types.Message):
     if message.from_user.id != CONFIG.get("OWNER_TELEGRAM_ID"):
@@ -169,6 +232,9 @@ async def cmd_buy(message: types.Message):
         if amount_bnb <= 0: raise ValueError
     except ValueError:
         return await message.answer("❌ Amount must be a valid positive number.")
+
+    if await refuse_if_risky(message, amount_bnb):
+        return
 
     status_msg = await message.answer("🛡️ Running Security & Anti-MEV audit...")
 
@@ -205,6 +271,9 @@ async def cmd_autotrade(message: types.Message):
     except ValueError:
         return await message.answer("❌ Parameters must be valid positive numbers.")
 
+    if await refuse_if_risky(message, amount_bnb):
+        return
+
     status_msg = await message.answer("🛡️ Auditing token and fetching entry price...")
     
     sec = await check_token_security(token_address)
@@ -216,10 +285,10 @@ async def cmd_autotrade(message: types.Message):
         return await status_msg.edit_text("❌ Failed to fetch accurate token price from DexScreener.")
 
     pk = get_decrypted_private_key(message.from_user.id)
-    result = await execute_buy_async(pk, token_address, amount_bnb, message.from_user.id, use_private_rpc=True)
+    result = await execute_buy_async(pk, token_address, amount_bnb, message.from_user.id, use_private_rpc=True,
+                                     entry_price=entry_price, tp_percent=tp_percent, sl_percent=sl_percent)
 
     if result.get("success"):
-        add_position(message.from_user.id, token_address, entry_price, tp_percent, sl_percent)
         tx_url = f"https://bscscan.com/tx/{result['tx_hash']}"
         await status_msg.edit_text(
             f"✅ *Position Opened with Auto TP/SL!*\n\n"
@@ -255,6 +324,7 @@ async def cmd_sell(message: types.Message):
     
     if res.get("success"):
         await status_msg.edit_text(f"✅ Sold {percent}%!\n🔗 [BscScan](https://bscscan.com/tx/{res['tx_hash']})", parse_mode="Markdown")
+        await notify_owner_if_loss_cap(message.from_user.id)
     else:
         await status_msg.edit_text(f"❌ *Failed:*\n`{escape_md(res.get('error'))}`", parse_mode="Markdown")
 
@@ -273,6 +343,9 @@ async def cmd_addwhale(message: types.Message):
         if buy_amount <= 0: raise ValueError
     except ValueError:
         return await message.answer("❌ Invalid BNB amount.")
+
+    if buy_amount > risk.LIMITS["MAX_TRADE_BNB"]:
+        return await message.answer(f"❌ Copy amount is over the per-trade cap of {risk.LIMITS['MAX_TRADE_BNB']} BNB.")
         
     add_whale_target(message.from_user.id, whale_address, buy_amount)
     await message.answer(f"🎯 *Whale Added!*\nAddress: `{whale_address}`\nCopy Amount: `{buy_amount} BNB`", parse_mode="Markdown")
@@ -297,6 +370,8 @@ async def set_bot_commands(bot: Bot):
         BotCommand(command="autotrade", description="🤖 Automated trade with TP/SL"),
         BotCommand(command="addwhale", description="🎯 Add whale address for copy-trading"),
         BotCommand(command="dashboard", description="📊 Analytics dashboard (Owner)"),
+        BotCommand(command="stop", description="🛑 Stop all buying (Owner)"),
+        BotCommand(command="resume", description="✅ Resume buying (Owner)"),
     ]
     await bot.set_my_commands(commands)
 
