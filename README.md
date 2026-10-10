@@ -66,12 +66,24 @@ Edit `config.json` and provide your credentials[cite: 2]:
 
 > **Price protection fails closed.** If the router cannot quote a trade, the trade is not sent: the user is told why and nothing is signed. The quote is taken a second time immediately before signing, and the trade is abandoned if the price has moved past `SLIPPAGE_TOLERANCE` in between.
 
-### 4. Run the Bot
+### 4. Set the Wallet Encryption Key
+Every stored wallet private key is encrypted with a Fernet key supplied in the `WALLET_ENCRYPTION_KEY` environment variable (see `.env.example`). It is never read from, or written to, a file next to the database.
+
+* **First start, empty database:** leave it unset. The bot generates a key, prints it to the terminal once, and exits. Store it somewhere safe, export it, and start again.
+* **Missing key with wallets in the database:** the bot refuses to start. It will never generate a replacement key over existing wallets.
+* **Wrong key:** at startup the bot decrypts a stored wallet as a self-test, and refuses to start if that fails.
+* **Upgrading from a version that used `secret.key`:** the file is no longer read. Put its contents into `WALLET_ENCRYPTION_KEY` and move the file out of the database directory; until then the bot refuses to start.
+
+```bash
+export WALLET_ENCRYPTION_KEY="<your key>"
+```
+
+### 5. Run the Bot
 ```bash
 python bot.py
 ```
 
-### 5. Run the Tests
+### 6. Run the Tests
 The suite is fully offline (web3 is stubbed, sockets are blocked) and needs no `config.json`, keys or `.env`:
 ```bash
 pip install -r requirements-dev.txt
