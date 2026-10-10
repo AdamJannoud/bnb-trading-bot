@@ -7,7 +7,7 @@ import json
 import os
 import time
 
-from db_manager import get_flag, set_flag, get_open_exposure, get_realised_pnl_since
+from db_manager import get_flag, get_open_exposure, get_realised_pnl_since, set_flag
 
 CONFIG_PATH = "config.json"
 KILL_SWITCH_FLAG = "buying_stopped"
@@ -22,7 +22,7 @@ DEFAULT_LIMITS = {
 def load_limits(path: str = CONFIG_PATH) -> dict:
     config = {}
     if os.path.exists(path):
-        with open(path, "r") as f:
+        with open(path) as f:
             config = json.load(f)
     limits = {}
     for key, default in DEFAULT_LIMITS.items():
@@ -40,7 +40,7 @@ def is_buying_stopped() -> bool:
 def set_buying_stopped(stopped: bool):
     set_flag(KILL_SWITCH_FLAG, "1" if stopped else "0")
 
-def realised_loss_24h(user_id: int, now: float = None) -> float:
+def realised_loss_24h(user_id: int, now: float | None = None) -> float:
     """Net realised loss over the rolling window, in BNB (0 when the window is in profit)."""
     now = time.time() if now is None else now
     return max(0.0, -get_realised_pnl_since(user_id, now - LOSS_WINDOW_SECONDS))

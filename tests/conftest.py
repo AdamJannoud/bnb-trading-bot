@@ -22,7 +22,7 @@ with open(os.path.join(REPO, "config.example.json")) as f:
     _config = json.load(f)
 # aiogram checks the token's shape when the Bot object is built (no request is
 # made); this placeholder only satisfies that check.
-_config["BOT_TOKEN"] = "0:offline-test-placeholder"
+_config["BOT_TOKEN"] = "0:offline-test-placeholder"  # nosec B105 # shape-only placeholder, not a token
 with open(os.path.join(SCRATCH, "config.json"), "w") as f:
     json.dump(_config, f)
 os.chdir(SCRATCH)

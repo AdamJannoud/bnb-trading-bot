@@ -1,0 +1,8 @@
+# Bandit configuration for the CI `lint` job:
+#   bandit -c bandit.yaml -r . -x ./.venv -q
+# Every skipped test needs a reason here. Intentional single sites are
+# suppressed in place with a line-scoped `# nosec <ID> - <reason>` instead.
+skips:
+  # B101 assert_used: the test suite is assert-based by design (pytest).
+  # Application code has no asserts, so this skip only affects tests/.
+  - B101

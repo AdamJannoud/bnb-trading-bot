@@ -1,5 +1,8 @@
+import logging
 import sqlite3
 import time
+
+logger = logging.getLogger(__name__)
 
 DB_PATH = "bot_database.db"
 
@@ -59,7 +62,7 @@ def _add_column(cursor, table: str, column: str, col_type: str):
         cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
 
 def log_trade(user_id: int, trade_type: str, token_addr: str, amount_bnb: float, fee_bnb: float, tx_hash: str,
-              realised_pnl_bnb: float = None):
+              realised_pnl_bnb: float | None = None):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -70,7 +73,7 @@ def log_trade(user_id: int, trade_type: str, token_addr: str, amount_bnb: float,
     conn.close()
 
 def add_position(user_id: int, token_addr: str, entry_price: float, tp_percent: float, sl_percent: float,
-                 token_amount: int = None, cost_bnb: float = None):
+                 token_amount: int | None = None, cost_bnb: float | None = None):
     """tp_percent/sl_percent are None for a plain buy: it counts toward exposure but has no auto exit."""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -98,7 +101,7 @@ def close_position(pos_id: int):
     conn.commit()
     conn.close()
 
-def realise_sell(user_id: int, token_addr: str, sold_amount: int, proceeds_bnb: float, position_id: int = None):
+def realise_sell(user_id: int, token_addr: str, sold_amount: int, proceeds_bnb: float, position_id: int | None = None):
     """Book a sale against open positions and return the realised PnL in BNB (None if nothing matched).
 
     With position_id, that position is closed outright (a TP/SL exit). Otherwise the
@@ -190,7 +193,7 @@ def get_dashboard_metrics():
         cursor.execute("SELECT COUNT(DISTINCT user_id) FROM users_wallets")
         total_users = cursor.fetchone()[0] or 0
     except Exception as e:
-        pass
+        logger.warning(f"Dashboard metrics: user count query failed: {e}")
 
     total_volume = 0.0
     total_fees = 0.0
@@ -204,14 +207,14 @@ def get_dashboard_metrics():
             total_fees = fees or 0.0
             total_trades = count or 0
     except Exception as e:
-        pass
+        logger.warning(f"Dashboard metrics: trade totals query failed: {e}")
 
     recent_trades = []
     try:
         cursor.execute("SELECT trade_type, token_address, amount_bnb, fee_bnb, tx_hash FROM trade_history ORDER BY id DESC LIMIT 10")
         recent_trades = cursor.fetchall()
     except Exception as e:
-        pass
+        logger.warning(f"Dashboard metrics: recent trades query failed: {e}")
 
     conn.close()
 

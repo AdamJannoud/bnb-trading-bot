@@ -8,7 +8,7 @@ import bot
 import wallet_manager
 import wallet_tools
 
-DUMMY_SECRET = "dummy-secret-for-export-test"
+DUMMY_SECRET = "dummy-secret-for-export-test"  # nosec B105 # test fixture value, not a credential
 
 
 class TtyBuffer(io.StringIO):

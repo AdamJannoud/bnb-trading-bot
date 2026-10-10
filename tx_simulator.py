@@ -1,5 +1,7 @@
 import logging
+
 from web3 import AsyncWeb3
+
 
 async def simulate_transaction(rpc_url: str, tx_params: dict) -> dict:
     w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(rpc_url))

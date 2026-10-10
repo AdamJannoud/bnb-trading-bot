@@ -2,8 +2,10 @@ import logging
 import os
 import sqlite3
 import sys
-from eth_account import Account
+
 from cryptography.fernet import Fernet, InvalidToken
+from eth_account import Account
+
 from solana_engine import generate_solana_wallet
 
 Account.enable_unaudited_hdwallet_features()
@@ -37,7 +39,7 @@ def _first_stored_wallet(db_path: str):
         conn.close()
     return row[0] if row else None
 
-def load_cipher(environ=None, db_path: str = None) -> Fernet:
+def load_cipher(environ=None, db_path: str | None = None) -> Fernet:
     environ = os.environ if environ is None else environ
     db_path = db_path or DB_NAME
     legacy_path = os.path.join(os.path.dirname(os.path.abspath(db_path)), LEGACY_KEY_FILE)

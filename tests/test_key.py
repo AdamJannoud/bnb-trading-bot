@@ -1,7 +1,7 @@
 """Fix 3: a missing or wrong encryption key stops startup instead of minting a new key."""
 import os
 import sqlite3
-import subprocess
+import subprocess  # nosec B404 # the test drives the real CLI startup in a child process
 import sys
 
 import pytest
@@ -41,7 +41,7 @@ def test_missing_key_on_empty_database_is_first_run(tmp_path):
 
 def test_legacy_key_file_is_not_read(tmp_path):
     (tmp_path / "secret.key").write_text("placeholder")
-    with pytest.raises(KeyConfigError, match="secret.key"):
+    with pytest.raises(KeyConfigError, match=r"secret.key"):
         load_cipher(environ={}, db_path=str(tmp_path / "bot_database.db"))
 
 
@@ -66,8 +66,8 @@ def test_matching_key_loads(tmp_path):
 def _start(cwd):
     env = {k: v for k, v in os.environ.items() if k != KEY_ENV_VAR}
     env["PYTHONPATH"] = REPO
-    return subprocess.run([sys.executable, "-c", "import wallet_manager"], cwd=cwd, env=env,
-                          capture_output=True, text=True, timeout=60)
+    return subprocess.run([sys.executable, "-c", "import wallet_manager"], cwd=cwd, env=env,  # nosec B603 # fixed argv, no shell
+                          capture_output=True, text=True, timeout=60, check=False)
 
 
 def test_process_refuses_to_start_without_key(tmp_path):

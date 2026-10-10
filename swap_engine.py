@@ -1,14 +1,16 @@
+import asyncio
 import json
 import time
-import asyncio
 from decimal import Decimal
+
 from web3 import AsyncWeb3
-from db_manager import log_trade, add_position, realise_sell
-from risk import check_buy
+
+from db_manager import add_position, log_trade, realise_sell
 from referral_manager import calculate_fee_split
+from risk import check_buy
 from tx_simulator import simulate_transaction
 
-with open("config.json", "r") as f:
+with open("config.json") as f:
     CONFIG = json.load(f)
 
 RPC_URL = CONFIG["RPC_URL"]
@@ -115,7 +117,7 @@ async def get_bnb_balance_async(address: str) -> float:
 _buy_locks = {}
 
 async def execute_buy_async(private_key: str, token_address: str, amount_bnb: float, user_id: int = 0, use_private_rpc: bool = False,
-                            entry_price: float = None, tp_percent: float = None, sl_percent: float = None):
+                            entry_price: float | None = None, tp_percent: float | None = None, sl_percent: float | None = None):
     lock = _buy_locks.setdefault(user_id, asyncio.Lock())
     async with lock:
         refusal = check_buy(user_id, amount_bnb)
@@ -210,7 +212,7 @@ async def _execute_buy(private_key, token_address, amount_bnb, user_id, use_priv
             "token_amount": tokens_received}
 
 async def execute_sell_async(private_key: str, token_address: str, percent: float = 100.0, user_id: int = 0, use_private_rpc: bool = False,
-                             token_amount: int = None, position_id: int = None):
+                             token_amount: int | None = None, position_id: int | None = None):
     """Sell `percent` of the wallet's balance, or exactly `token_amount` (capped at the balance) when given."""
     active_w3 = private_w3 if use_private_rpc else w3
     account = active_w3.eth.account.from_key(private_key)

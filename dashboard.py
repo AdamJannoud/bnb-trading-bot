@@ -1,11 +1,13 @@
-from aiohttp import web
-from db_manager import get_dashboard_metrics
-import traceback
-import json
 import base64
+import json
+import traceback
+
+from aiohttp import web
+
+from db_manager import get_dashboard_metrics
 
 try:
-    with open("config.json", "r") as f:
+    with open("config.json") as f:
         CONFIG = json.load(f)
 except Exception:
     CONFIG = {}
@@ -97,7 +99,7 @@ async def dashboard_handler(request):
         )
         return web.Response(text=html, content_type="text/html")
         
-    except Exception as e:
+    except Exception:
         error_trace = traceback.format_exc()
         error_html = f"<div style='background:#222; color:#ff4757; padding:20px; font-family:monospace;'><h2>Dashboard Error:</h2><pre>{error_trace}</pre></div>"
         return web.Response(text=error_html, status=500, content_type="text/html")

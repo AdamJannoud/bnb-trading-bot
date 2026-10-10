@@ -1,16 +1,19 @@
 import asyncio
 import json
 import logging
+
 import websockets
 from web3 import AsyncWeb3
-from db_manager import get_whale_followers
-from wallet_manager import get_decrypted_private_key
-from swap_engine import execute_buy_async
+
 import risk
+from db_manager import get_whale_followers
+from swap_engine import execute_buy_async
+from wallet_manager import get_decrypted_private_key
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-with open("config.json", "r") as f:
+with open("config.json") as f:
     CONFIG = json.load(f)
 
 WSS_URL = CONFIG.get("WSS_RPC_URL", "wss://bsc-ws-node.nodedata.com/")
@@ -64,7 +67,7 @@ async def track_mempool(target_wallets: set):
                 if "params" in data:
                     tx_hash = data["params"]["result"]
                     asyncio.create_task(process_pending_tx(tx_hash, target_wallets))
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             except Exception as e:
                 logging.error(f"WSS Error: {e}")
@@ -81,14 +84,14 @@ async def process_pending_tx(tx_hash: str, target_wallets: set):
             input_data = tx.get('input', '')
             
             if len(input_data) >= 10 and input_data[:10].lower() in valid_selectors:
-                func_obj, func_params = router_contract.decode_function_input(input_data)
+                _func_obj, func_params = router_contract.decode_function_input(input_data)
                 
                 if 'path' in func_params and len(func_params['path']) >= 2:
                     token_address = func_params['path'][-1]
                     logging.info(f"🚨 Whale {tx['from']} buying: {token_address}. Executing Copy...")
                     asyncio.create_task(execute_copy_trade(tx['from'].lower(), token_address))
     except Exception as e:
-        pass
+        logger.debug(f"Skipped pending tx {tx_hash}: {e}")
 
 async def execute_copy_trade(whale_address: str, token_address: str):
     followers = get_whale_followers(whale_address)

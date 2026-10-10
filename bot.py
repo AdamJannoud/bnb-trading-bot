@@ -1,32 +1,39 @@
 import asyncio
 import json
 import logging
-import re
 import os
+import re
+
 import aiohttp
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command, CommandObject
 from aiogram.types import BotCommand
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 from aiohttp import web
-from web3 import Web3, AsyncWeb3
-from wallet_manager import get_or_create_wallet, get_decrypted_private_key
-from swap_engine import execute_buy_async, execute_sell_async, get_bnb_balance_async
-from signals_scanner import fetch_trending_signals
-from security_scanner import check_token_security
-from db_manager import get_active_positions, close_position, add_whale_target, get_all_whale_addresses
+
+# wallet_manager runs the WALLET_ENCRYPTION_KEY boot check at import time; it
+# stays first so a refused start happens before db_manager creates the database.
+from wallet_manager import get_decrypted_private_key, get_or_create_wallet
+
+# isort: split
 import risk
 from dashboard import create_dashboard_app
-from referral_manager import register_referral
+from db_manager import (
+    add_whale_target,
+    close_position,
+    get_active_positions,
+    get_all_whale_addresses,
+)
 from mempool_listener import track_mempool
+from referral_manager import register_referral
+from security_scanner import check_token_security
+from swap_engine import execute_buy_async, execute_sell_async, get_bnb_balance_async
 
 CONFIG_PATH = "config.json"
 
 def load_config():
     if not os.path.exists(CONFIG_PATH):
         raise FileNotFoundError("config.json file is missing! Please copy config.example.json to config.json and fill in the details.")
-    with open(CONFIG_PATH, "r") as f:
+    with open(CONFIG_PATH) as f:
         return json.load(f)
 
 def save_config(config_data):
@@ -40,6 +47,7 @@ if not BOT_TOKEN:
     raise ValueError("Provide BOT_TOKEN in config.json")
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
@@ -53,15 +61,14 @@ def escape_md(text: str) -> str:
 async def get_live_token_price(token_address: str) -> float:
     try:
         url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=5) as r:
-                if r.status == 200:
-                    data = await r.json()
-                    pairs = data.get("pairs", [])
-                    if pairs:
-                        return float(pairs[0].get("priceUsd", 0.0))
-    except Exception:
-        pass
+        async with aiohttp.ClientSession() as session, session.get(url, timeout=5) as r:
+            if r.status == 200:
+                data = await r.json()
+                pairs = data.get("pairs", [])
+                if pairs:
+                    return float(pairs[0].get("priceUsd", 0.0))
+    except Exception as e:
+        logger.debug(f"Live price lookup failed for {token_address}: {e}")
     return 0.0
 
 def is_owner(user_id: int) -> bool:
@@ -164,9 +171,8 @@ async def cmd_start(message: types.Message, command: CommandObject):
     owner_id = CONFIG.get("OWNER_TELEGRAM_ID")
     owner_wallet = CONFIG.get("OWNER_FEE_WALLET")
 
-    if not owner_id or not owner_wallet:
-        if user_id == owner_id:
-            await message.answer("⚠️ *System Warning:* Owner setup is incomplete. Please configure `OWNER_TELEGRAM_ID` and `OWNER_FEE_WALLET` in `config.json` manually.", parse_mode="Markdown")
+    if (not owner_id or not owner_wallet) and user_id == owner_id:
+        await message.answer("⚠️ *System Warning:* Owner setup is incomplete. Please configure `OWNER_TELEGRAM_ID` and `OWNER_FEE_WALLET` in `config.json` manually.", parse_mode="Markdown")
 
     wallet = get_or_create_wallet(user_id, chain_type='EVM', is_master=1)
     address = wallet["address"]
@@ -229,7 +235,8 @@ async def cmd_buy(message: types.Message):
 
     try:
         amount_bnb = float(parts[2])
-        if amount_bnb <= 0: raise ValueError
+        if amount_bnb <= 0:
+            raise ValueError
     except ValueError:
         return await message.answer("❌ Amount must be a valid positive number.")
 
@@ -267,7 +274,8 @@ async def cmd_autotrade(message: types.Message):
         amount_bnb = float(parts[2])
         tp_percent = float(parts[3])
         sl_percent = float(parts[4])
-        if amount_bnb <= 0 or tp_percent <= 0 or sl_percent <= 0: raise ValueError
+        if amount_bnb <= 0 or tp_percent <= 0 or sl_percent <= 0:
+            raise ValueError
     except ValueError:
         return await message.answer("❌ Parameters must be valid positive numbers.")
 
@@ -313,7 +321,8 @@ async def cmd_sell(message: types.Message):
 
     try:
         percent = float(parts[2]) if len(parts) >= 3 else 100.0
-        if not (0 < percent <= 100): raise ValueError
+        if not (0 < percent <= 100):
+            raise ValueError
     except ValueError:
         return await message.answer("❌ Percentage must be between 0.1 and 100.")
 
@@ -340,7 +349,8 @@ async def cmd_addwhale(message: types.Message):
 
     try:
         buy_amount = float(parts[2])
-        if buy_amount <= 0: raise ValueError
+        if buy_amount <= 0:
+            raise ValueError
     except ValueError:
         return await message.answer("❌ Invalid BNB amount.")
 
@@ -379,7 +389,7 @@ async def main():
     app = create_dashboard_app()
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", 8080)
+    site = web.TCPSite(runner, "0.0.0.0", 8080)  # nosec B104 # dashboard must be reachable from outside the container
     await site.start()
     logging.info("Owner Dashboard running at http://0.0.0.0:8080")
     

@@ -1,0 +1,37 @@
+# Ruff configuration for the CI `lint` job. A standalone ruff.toml rather than
+# pyproject.toml, so this flat script project gains no packaging metadata.
+# The rule selection is explicit: Ruff's own defaults change between releases,
+# and this gate must mean the same thing locally and in CI (ruff is pinned in
+# requirements-dev.txt).
+
+# CI runs on 3.11 and 3.12.
+target-version = "py311"
+
+[lint]
+select = [
+    "F",        # pyflakes
+    "E4",       # pycodestyle: imports
+    "E7",       # pycodestyle: statements
+    "E9",       # pycodestyle: runtime / syntax errors
+    "I",        # import sorting
+    "UP",       # pyupgrade
+    "RUF",      # ruff-specific rules
+    "SIM",      # flake8-simplify
+    "PLW1510",  # subprocess.run without an explicit check=
+]
+
+# Families deliberately NOT selected:
+# - "BLE" (blind except): the 19 `except Exception` blocks sit in trading,
+#   TP/SL, copy-trade, swap and key-handling paths. Narrowing them changes
+#   which errors propagate at runtime, so it belongs to the audit's P1/P2
+#   remediation, not to this lint gate.
+# - "S" (flake8-bandit): Bandit is this gate's security scanner
+#   (`bandit -c bandit.yaml`); selecting S would duplicate it with a second
+#   set of suppressions to keep in step.
+
+ignore = [
+    # Storing a reference to each asyncio.create_task() result changes task
+    # lifetime for the TP/SL monitor, the mempool listener and copy-trade
+    # execution: runtime behaviour of trading logic. Deferred to remediation.
+    "RUF006",
+]

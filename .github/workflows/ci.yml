@@ -22,3 +22,22 @@ jobs:
       # and fakes web3, so no RPC endpoint, keys, secrets or .env are needed.
       - name: Run tests
         run: python -m pytest -q
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+      # Rule selection lives in ruff.toml; any finding fails the job.
+      - name: Ruff
+        run: ruff check .
+      # Skip list (with reasons) lives in bandit.yaml; any finding fails the job.
+      - name: Bandit
+        run: bandit -c bandit.yaml -r . -x ./.venv -q
