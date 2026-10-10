@@ -16,7 +16,20 @@ CHAIN_ID = CONFIG["CHAIN_ID"]
 ROUTER_ADDRESS = AsyncWeb3.to_checksum_address(CONFIG["PANCAKESWAP_ROUTER"])
 WBNB_ADDRESS = AsyncWeb3.to_checksum_address(CONFIG["WBNB_ADDRESS"])
 FEE_PERCENTAGE = Decimal(str(CONFIG.get("FEE_PERCENTAGE", 1.0)))
-SLIPPAGE_TOLERANCE = 0.05
+
+# Slippage tolerance comes from config, but never wider than this ceiling: a
+# tolerance that wide makes the minimum output meaningless.
+SLIPPAGE_CEILING = 0.15
+
+def load_slippage_tolerance(config: dict) -> float:
+    value = float(config.get("SLIPPAGE_TOLERANCE", 0.05))
+    if not (0 < value <= SLIPPAGE_CEILING):
+        raise ValueError(
+            f"SLIPPAGE_TOLERANCE={value} refused: it must be above 0 and at most {SLIPPAGE_CEILING}."
+        )
+    return value
+
+SLIPPAGE_TOLERANCE = load_slippage_tolerance(CONFIG)
 
 w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(RPC_URL))
 private_w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(PRIVATE_RPC_URL))
@@ -74,6 +87,25 @@ ERC20_ABI = [
     }
 ]
 
+class QuoteError(Exception):
+    """The router could not price a trade. The trade must not be sent."""
+
+async def quote_amount_out(router_contract, amount_in: int, path: list) -> int:
+    try:
+        amounts_out = await router_contract.functions.getAmountsOut(amount_in, path).call()
+        expected = int(amounts_out[-1])
+    except Exception as e:
+        raise QuoteError(f"No price quote from the router ({type(e).__name__}).") from e
+    if expected <= 0:
+        raise QuoteError("The router quoted zero output.")
+    return expected
+
+async def requote_or_abort(router_contract, amount_in: int, path: list, amount_out_min: int):
+    """Quote again right before signing; the first quote can be seconds stale."""
+    expected = await quote_amount_out(router_contract, amount_in, path)
+    if expected < amount_out_min:
+        raise QuoteError("Price moved past slippage tolerance before signing. Trade abandoned.")
+
 async def get_bnb_balance_async(address: str) -> float:
     balance_wei = await w3.eth.get_balance(AsyncWeb3.to_checksum_address(address))
     return float(w3.from_wei(balance_wei, "ether"))
@@ -99,11 +131,10 @@ async def execute_buy_async(private_key: str, token_address: str, amount_bnb: fl
     path = [WBNB_ADDRESS, token_address]
     
     try:
-        amounts_out = await router_contract.functions.getAmountsOut(swap_amount_wei, path).call()
-        expected_tokens = amounts_out[1]
-        amount_out_min = int(expected_tokens * (1 - SLIPPAGE_TOLERANCE))
-    except Exception:
-        amount_out_min = 0
+        expected_tokens = await quote_amount_out(router_contract, swap_amount_wei, path)
+    except QuoteError as e:
+        return {"success": False, "error": str(e)}
+    amount_out_min = int(expected_tokens * (1 - SLIPPAGE_TOLERANCE))
 
     deadline = int(time.time()) + 1200
 
@@ -118,6 +149,11 @@ async def execute_buy_async(private_key: str, token_address: str, amount_bnb: fl
     sim_result = await simulate_transaction(sim_rpc, swap_txn)
     if not sim_result["success"]:
         return {"success": False, "error": f"Simulation Failed: {sim_result['error']}"}
+
+    try:
+        await requote_or_abort(router_contract, swap_amount_wei, path, amount_out_min)
+    except QuoteError as e:
+        return {"success": False, "error": str(e)}
 
     signed_swap_tx = active_w3.eth.account.sign_transaction(swap_txn, private_key)
     tx_hash = await active_w3.eth.send_raw_transaction(signed_swap_tx.raw_transaction)
@@ -183,11 +219,10 @@ async def execute_sell_async(private_key: str, token_address: str, percent: floa
     path = [token_address, WBNB_ADDRESS]
 
     try:
-        amounts_out = await router_contract.functions.getAmountsOut(amount_to_sell, path).call()
-        expected_bnb = amounts_out[1]
-        amount_out_min = int(expected_bnb * (1 - SLIPPAGE_TOLERANCE))
-    except Exception:
-        amount_out_min = 0
+        expected_bnb = await quote_amount_out(router_contract, amount_to_sell, path)
+    except QuoteError as e:
+        return {"success": False, "error": str(e)}
+    amount_out_min = int(expected_bnb * (1 - SLIPPAGE_TOLERANCE))
 
     swap_txn = await router_contract.functions.swapExactTokensForETHSupportingFeeOnTransferTokens(
         amount_to_sell, amount_out_min, path, user_address, int(time.time()) + 1200
@@ -200,6 +235,11 @@ async def execute_sell_async(private_key: str, token_address: str, percent: floa
     sim_result = await simulate_transaction(sim_rpc, swap_txn)
     if not sim_result["success"]:
         return {"success": False, "error": f"Simulation Failed: {sim_result['error']}"}
+
+    try:
+        await requote_or_abort(router_contract, amount_to_sell, path, amount_out_min)
+    except QuoteError as e:
+        return {"success": False, "error": str(e)}
 
     signed_swap = active_w3.eth.account.sign_transaction(swap_txn, private_key)
     tx_hash = await active_w3.eth.send_raw_transaction(signed_swap.raw_transaction)

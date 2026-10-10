@@ -62,10 +62,20 @@ Edit `config.json` and provide your credentials[cite: 2]:
 * `OWNER_TELEGRAM_ID`: Your Telegram numeric user ID[cite: 2].
 * `OWNER_FEE_WALLET`: EVM address for collecting platform commissions[cite: 2].
 * `RPC_URL` & `WSS_RPC_URL`: Reliable RPC and WebSocket endpoints[cite: 2].
+* `SLIPPAGE_TOLERANCE` (default `0.05`): the fraction below the router's quote that a swap may fill at. Values above `0.15` (or at or below `0`) are refused at startup, because a floor that wide protects nothing.
+
+> **Price protection fails closed.** If the router cannot quote a trade, the trade is not sent: the user is told why and nothing is signed. The quote is taken a second time immediately before signing, and the trade is abandoned if the price has moved past `SLIPPAGE_TOLERANCE` in between.
 
 ### 4. Run the Bot
 ```bash
 python bot.py
+```
+
+### 5. Run the Tests
+The suite is fully offline (web3 is stubbed, sockets are blocked) and needs no `config.json`, keys or `.env`:
+```bash
+pip install -r requirements-dev.txt
+python -m pytest -q
 ```
 
 ---

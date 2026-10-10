@@ -3,6 +3,7 @@
     "OWNER_TELEGRAM_ID": 123456789,
     "OWNER_FEE_WALLET": "0xYourOwnerBnbWalletAddressHere",
     "FEE_PERCENTAGE": 1.0,
+    "SLIPPAGE_TOLERANCE": 0.05,
 
     "DASHBOARD_USER": "admin",
     "DASHBOARD_PASS": "admin123",
