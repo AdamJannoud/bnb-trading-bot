@@ -185,38 +185,47 @@ def set_flag(name: str, value: str):
     conn.close()
 
 def get_dashboard_metrics():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
     total_users = 0
-    try:
-        cursor.execute("SELECT COUNT(DISTINCT user_id) FROM users_wallets")
-        total_users = cursor.fetchone()[0] or 0
-    except Exception as e:
-        logger.warning(f"Dashboard metrics: user count query failed: {e}")
-
     total_volume = 0.0
     total_fees = 0.0
     total_trades = 0
-    try:
-        cursor.execute("SELECT SUM(amount_bnb), SUM(fee_bnb), COUNT(id) FROM trade_history")
-        row = cursor.fetchone()
-        if row:
-            vol, fees, count = row
-            total_volume = vol or 0.0
-            total_fees = fees or 0.0
-            total_trades = count or 0
-    except Exception as e:
-        logger.warning(f"Dashboard metrics: trade totals query failed: {e}")
-
     recent_trades = []
-    try:
-        cursor.execute("SELECT trade_type, token_address, amount_bnb, fee_bnb, tx_hash FROM trade_history ORDER BY id DESC LIMIT 10")
-        recent_trades = cursor.fetchall()
-    except Exception as e:
-        logger.warning(f"Dashboard metrics: recent trades query failed: {e}")
 
-    conn.close()
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("SELECT COUNT(DISTINCT user_id) FROM users_wallets")
+            total_users = cursor.fetchone()[0] or 0
+        except Exception as e:
+            logger.warning(f"Dashboard metrics: user count query failed: {e}")
+
+        try:
+            cursor.execute("SELECT SUM(amount_bnb), SUM(fee_bnb), COUNT(id) FROM trade_history")
+            row = cursor.fetchone()
+            if row:
+                vol, fees, count = row
+                total_volume = vol or 0.0
+                total_fees = fees or 0.0
+                total_trades = count or 0
+        except Exception as e:
+            logger.warning(f"Dashboard metrics: trade totals query failed: {e}")
+
+        try:
+            cursor.execute("SELECT trade_type, token_address, amount_bnb, fee_bnb, tx_hash FROM trade_history ORDER BY id DESC LIMIT 10")
+            recent_trades = cursor.fetchall()
+        except Exception as e:
+            logger.warning(f"Dashboard metrics: recent trades query failed: {e}")
+    except Exception as e:
+        logger.warning(f"Dashboard metrics: database unavailable: {e}")
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception as e:
+                logger.warning(f"Dashboard metrics: closing the database failed: {e}")
 
     return {
         "total_users": total_users,

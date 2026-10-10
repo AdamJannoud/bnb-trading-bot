@@ -21,9 +21,20 @@ async def check_token_security(token_address: str) -> dict:
             sell_tax = float(result.get("sell_tax", 0)) * 100
 
             if is_honeypot or cannot_sell or sell_tax > 15.0 or buy_tax > 15.0:
+                # One clause per trigger that actually fired, so the message
+                # names the real cause instead of a fixed honeypot template.
+                causes = []
+                if is_honeypot:
+                    causes.append("Honeypot detected")
+                if cannot_sell:
+                    causes.append("Cannot sell all tokens (unsellable)")
+                if buy_tax > 15.0:
+                    causes.append(f"Buy Tax {buy_tax:.1f}% exceeds 15.0%")
+                if sell_tax > 15.0:
+                    causes.append(f"Sell Tax {sell_tax:.1f}% exceeds 15.0%")
                 return {
                     "safe": False,
-                    "reason": f"High Risk Detected! Honeypot: {is_honeypot} | Buy Tax: {buy_tax:.1f}% | Sell Tax: {sell_tax:.1f}%",
+                    "reason": "High Risk Detected! " + " | ".join(causes),
                     "buy_tax": buy_tax,
                     "sell_tax": sell_tax
                 }
